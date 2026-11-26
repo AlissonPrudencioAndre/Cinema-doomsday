@@ -264,37 +264,23 @@ Os valores de pedidos por segundo representam as taxas observadas nas execuçõe
 
 ## 11. Perguntas e respostas
 
-### O que acontece quando duas pessoas tentam reservar a mesma poltrona?
+1. Concorrência
+Antes de iniciar o pagamento, a aplicação tenta reservar as poltronas. O método Evento.reservar() verifica se todas estão disponíveis e, sem executar nenhum await entre a verificação e a atualização, marca todas como ocupadas. Assim, no processo atual do Node, outro pedido não consegue entrar no meio dessa operação síncrona e reservar a mesma poltrona.
+O await perigoso seria entre verificar a disponibilidade e marcar as poltronas como ocupadas. Se houvesse uma pausa nesse ponto, outro pedido poderia verificar a mesma poltrona como livre. Também seria perigoso fazer o pagamento antes de reservar: duas requisições poderiam cobrar e só depois disputar a poltrona. Por isso, reservamos antes do pagamento e liberamos as poltronas se o pagamento falhar ou exceder o tempo limite.
 
-A primeira requisição que consegue reserva terá a poltrona, marcando o assento como ocupado. As requisições seguintes recebem o erro `PoltronaOcupadaErro`.
+2. Orientação a objetos (OO)
+O Evento esconde o conjunto de poltronas ocupadas e controla como elas são reservadas ou liberadas. Isso protege o estado interno: outras partes do sistema não devem alterar diretamente as poltronas, porque poderiam deixar a capacidade ou a disponibilidade inconsistentes.
+A reserva é tudo ou nada porque, se alguém compra várias poltronas, não queremos reservar apenas algumas e rejeitar as restantes. Primeiro validamos todas; só depois marcamos todas como ocupadas. Se houver uma poltrona inválida, repetida ou já ocupada, nenhuma é reservada.
+Os erros formam uma hierarquia de classes para representar tipos específicos de falha. Isso permite tratar erros de forma uniforme, mas ainda distinguir, por exemplo, uma poltrona ocupada de uma falha no pagamento e convertê-los em respostas HTTP adequadas.
 
-### Por que as poltronas são reservadas antes do pagamento?
+4. Programação funcional
+Em preco.ts, as funções de cálculo são puras: recebem os dados necessários e devolvem o preço, sem alterar o estado do sistema nem depender do servidor. Isso torna o comportamento mais previsível e facilita a reutilização e os testes.
+Podemos testar preco.ts diretamente, importando as funções em um arquivo de testes e verificando entradas e saídas esperadas. Não precisamos iniciar o Express, fazer requisições HTTP ou simular o pagamento. Também podemos testar casos de meia-entrada, quantidade de ingressos e diferentes tipos de preço.
 
-impede que outras requisições reservem a mesma poltrona enquanto a primeira aguarda a operadora de pagamento.
+4. Se fosse em outro paradigma
+Poderíamos transformar os tipos de ingresso em classes, como IngressoInteira e IngressoMeia, cada uma com um método para calcular o preço. Isso seria uma abordagem mais orientada a objetos, útil se cada tipo tivesse regras e comportamentos complexos.
+Para o nosso caso, em que o cálculo é simples e não precisa manter estado, as funções puras são mais leves e fáceis de testar. Então, usar OO seria possível, mas provavelmente acrescentaria estrutura sem um benefício proporcional.
 
-### O que acontece quando o pagamento falha?
-
-O sistema libera as poltronas reservadas e retorna um erro de pagamento com status HTTP 502.
-
-### Como o sistema trata o tempo limite de pagamento?
-
-`pagarComLimite()` utiliza `Promise.race()` para aguardar o pagamento ou o tempo limite configurado. Se o limite for atingido, a operação é tratada como uma falha de pagamento.
-
-### O que os benchmarks demonstram?
-
-a aplicação processou 200 pedidos simultâneos em cada execução, respeitando a capacidade dos eventos e rejeitando as tentativas de reserva de poltronas ocupadas.
-
-### O sistema utiliza um banco de dados?
-
-Não, os eventos e as poltronas ocupadas são mantidos em memória, utilizando estruturas como `Map` e `Set`.
-
-### O sistema impede vendas acima da capacidade?
-
-o sistema respeitou a capacidade dos eventos e não apresentou vendas acima do número de poltronas disponíveis.
-a classe `Evento` para impede reservas duplicadas.
-
-## 12. Considerações finais
-
-O projeto Cinema doomsday demonstrou a aplicação dos paradigmas de programação orientada a objetos e programação funcional em um sistema de venda de ingressos.
-testes automatizados obtiveram 16 pontos de 16, e os benchmarks demonstraram o controle das reservas em cenários de concorrência.
-A implementação atende ao controle de poltronas, cálculo de preços, processamento de pagamentos, tratamento de erros e disponibilização de uma API HTTP.
+6. Concorrente × paralelo
+Os pedidos são concorrentes porque podem estar em andamento ao mesmo tempo, por exemplo, enquanto aguardam o pagamento. Isso não significa que o JavaScript execute esses trechos simultaneamente em vários núcleos. No nosso caso, a parte síncrona que verifica e marca as poltronas roda sem interrupção dentro do processo, enquanto as operações assíncronas podem aguardar.
+Se a venda rodasse em vários processos ou núcleos, a proteção em memória de um único processo não seria suficiente. Cada processo poderia ter seu próprio estado e considerar a mesma poltrona disponível. Precisaríamos de uma coordenação compartilhada, como uma transação no banco de dados com bloqueio ou atualização atômica da poltrona. Também seria importante tratar tentativas repetidas de pagamento, por exemplo, com uma chave de idempotência.
